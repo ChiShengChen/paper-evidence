@@ -108,9 +108,43 @@ def mark_include(ledger_path: Path, max_papers: int, require_oa: bool = True) ->
     return sorted(chosen)
 
 
+# tokens that carry no signal as a snippet anchor: stopwords, booleans, and the field
+# prefixes of native search syntax (arXiv all:/ti:/abs:, PubMed [tiab]/[ab]/[mesh], ...)
+_TERM_STOP = {
+    "the", "a", "an", "of", "in", "on", "for", "and", "or", "not", "to", "with", "by",
+    "using", "via", "from", "is", "are", "that", "this", "we", "our", "new", "based",
+    "all", "ti", "abs", "au", "cat", "jr", "rn", "co", "tiab", "ab", "mesh", "so", "dp",
+}
+_TERM_WORD = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
+_TERM_PHRASE = re.compile(r'"([^"]{3,})"')
+
+
+def query_terms(queries: list[str]) -> list[str]:
+    """Snippet anchors derived from queries: quoted phrases first (they tend to appear
+    verbatim), then individual keywords — minus stopwords / booleans / field prefixes.
+    Splitting matters: a whole query phrase rarely occurs verbatim in a paper, so without
+    this the snippet stage finds nothing and extraction falls back to the document head."""
+    seen: set[str] = set()
+    terms: list[str] = []
+
+    def add(t: str) -> None:
+        t = t.strip()
+        k = t.lower()
+        if t and k not in seen and k not in _TERM_STOP:
+            seen.add(k)
+            terms.append(t)
+
+    for q in queries:
+        for ph in _TERM_PHRASE.findall(q):
+            add(ph)
+        for m in _TERM_WORD.finditer(q):
+            add(m.group(0))
+    return terms
+
+
 def make_terms_file(path: Path, terms: list[str], queries: list[str]) -> Path:
-    """Write terms.txt for extract_snippets: explicit --terms, else the query phrases."""
-    lines = terms or [q for q in queries if q.strip()]
+    """Write terms.txt for extract_snippets: explicit --terms, else keywords from queries."""
+    lines = terms or query_terms(queries) or [q for q in queries if q.strip()]
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return Path(path)
 

@@ -90,9 +90,23 @@ def test_gather_snippets_falls_back_to_fulltext(tmp_path):
     assert "0.912 macro-F1" in blob
 
 
-def test_make_terms_file_defaults_to_queries(tmp_path):
-    p = evidence.make_terms_file(tmp_path / "terms.txt", [], ["EEG foundation model"])
-    assert p.read_text().strip() == "EEG foundation model"
+def test_make_terms_file_splits_query_into_keywords(tmp_path):
+    p = evidence.make_terms_file(tmp_path / "terms.txt", [], ["EEG foundation model for sleep"])
+    lines = p.read_text().split()
+    assert "EEG" in lines and "foundation" in lines and "sleep" in lines
+    assert "for" not in lines                          # stopword dropped
+    # explicit --terms still passes through verbatim
+    p2 = evidence.make_terms_file(tmp_path / "t2.txt", ["custom term"], ["ignored"])
+    assert p2.read_text().strip() == "custom term"
+
+
+def test_query_terms_quoted_phrase_and_syntax():
+    # quoted phrase kept as one anchor; field prefix + boolean dropped
+    terms = evidence.query_terms(['all:"mushroom body" AND dopamine'])
+    assert "mushroom body" in terms and "dopamine" in terms
+    assert "all" not in terms and "AND" not in terms and "and" not in terms
+    # dedup across queries, case-insensitive
+    assert evidence.query_terms(["Dopamine dopamine DOPAMINE"]) == ["Dopamine"]
 
 
 def test_expand_sources_all_shortcut():
