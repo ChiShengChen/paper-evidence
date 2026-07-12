@@ -162,6 +162,11 @@ without a key. `semantic.chunk_text/rank_chunks/keyword_windows` are reusable an
   gate falls back to verbatim-only (never silently faked).
 - **Recall is measured** — search stops only after *k* zero-yield batches; snowball chases
   citations; a survey's references are diffed against the ledger for a concrete number.
+  `recall.snowball_s2()` does citation snowball **without the skill** (stdlib Semantic Scholar),
+  so recall works standalone; it composes with the pure `recall.recall_diff()`.
+- **Each card is graded** — `quote_gate.build` attaches an `evidence_state` verdict
+  (Supported/Tension/Conflict/Unknown + confidence) to every card result, so downstream gets a
+  graded confidence, not just pass/fail (`abstract_only=True` caps confidence at Med).
 - **Citations are real** (`citation.py`) — a DOI / PMID / arXiv id is resolved against
   Crossref / OpenAlex / PubMed / the arXiv API; an id that doesn't resolve is `unverified`
   (likely invented), a flagged one is `RETRACTED` (don't build on it), and an expected title

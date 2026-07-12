@@ -122,6 +122,87 @@ def pick_survey(ledger: list[dict]) -> dict | None:
     return max(surveys, key=_citations) if surveys else None
 
 
+# --------------------------------------------------------------------------- #
+# skill-free citation snowball (Semantic Scholar Graph API, stdlib urllib)
+# --------------------------------------------------------------------------- #
+_S2 = "https://api.semanticscholar.org/graph/v1"
+
+
+def _s2_seed_ref(seed: str) -> str | None:
+    """A seed id (doi:/arxiv:/pmid: or bare) -> a Semantic Scholar paper reference."""
+    s = str(seed or "").strip()
+    low = s.lower()
+    if low.startswith("pmid:"):
+        return f"PMID:{s[5:].strip()}"
+    if low.startswith("arxiv:"):
+        return f"ARXIV:{a}" if (a := norm_arxiv(s[6:])) else None
+    if low.startswith("doi:"):
+        return f"DOI:{d}" if (d := norm_doi(s[4:])) else None
+    if s.isdigit():
+        return f"PMID:{s}"
+    if (a := norm_arxiv(s)):
+        return f"ARXIV:{a}"
+    if (d := norm_doi(s)):
+        return f"DOI:{d}"
+    return None
+
+
+def _s2_edges(seed_ref: str, direction: str, limit: int) -> list[dict]:
+    import json
+    import os
+    import urllib.parse
+    import urllib.request
+    node = "references" if direction == "refs" else "citations"
+    inner = "citedPaper" if direction == "refs" else "citingPaper"
+    url = (f"{_S2}/paper/{seed_ref}/{node}?"
+           + urllib.parse.urlencode({"fields": "title,abstract,year,externalIds,citationCount",
+                                     "limit": min(limit, 100)}))
+    headers = {"User-Agent": "paper-evidence/1.0"}
+    if (key := os.environ.get("SEMANTIC_SCHOLAR_API_KEY") or os.environ.get("S2_API_KEY")):
+        headers["x-api-key"] = key
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as r:
+            js = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001 — 429 / offline -> no snowball, not a crash
+        return []
+    out = []
+    for d in (js or {}).get("data", []):
+        p = d.get(inner) or {}
+        if not p.get("title"):
+            continue
+        ext = p.get("externalIds") or {}
+        out.append({"source": "s2-snowball", "query": f"snowball:{direction}",
+                    "title": p["title"], "abstract": p.get("abstract") or "",
+                    "year": p.get("year") or "", "doi": ext.get("DOI", "") or "",
+                    "arxiv_id": ext.get("ArXiv", "") or "",
+                    "pmid": str(ext.get("PubMed", "") or ""),
+                    "citations": p.get("citationCount", "") or "", "url": "", "pdf_url": ""})
+    return out
+
+
+def snowball_s2(seed_ids: list[str], *, direction: str = "both",
+                max_per_seed: int = 50) -> list[dict]:
+    """References + citations of the seeds via Semantic Scholar — NO skill required.
+
+    Returns ledger-compatible records (dedup them with dedupe.py or diff with recall_diff).
+    A skill-free alternative to snowball.py, so recall works without the paper-deep-search
+    skill installed. Set SEMANTIC_SCHOLAR_API_KEY to avoid 429s."""
+    dirs = ["refs", "cites"] if direction == "both" else [direction]
+    out, seen = [], set()
+    for sid in seed_ids:
+        ref = _s2_seed_ref(sid)
+        if not ref:
+            continue
+        for dr in dirs:
+            for rec in _s2_edges(ref, dr, max_per_seed):
+                key = (norm_doi(rec["doi"]) or norm_arxiv(rec["arxiv_id"])
+                       or rec["pmid"] or norm_title(rec["title"]))
+                if key and key not in seen:
+                    seen.add(key)
+                    out.append(rec)
+    return out
+
+
 def recall_diff(refs: list[dict], ledger: list[dict]) -> dict[str, Any]:
     """Fraction of a survey's (deduped) references already in the ledger, plus the misses."""
     led_keys: set[str] = set()

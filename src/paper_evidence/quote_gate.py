@@ -272,7 +272,8 @@ def _load_sources(papers_dir: Path) -> dict[str, str]:
 
 
 def verify_cards(cards: list[dict], sources: dict[str, str],
-                 allow_fuzzy: bool = False, judge: Any = None) -> list[dict]:
+                 allow_fuzzy: bool = False, judge: Any = None,
+                 abstract_only: bool = False) -> list[dict]:
     """Verify each evidence card: verbatim quote first, then (optionally) faithfulness.
 
     A card enters the verified pool only if its quote is verbatim AND — when a `judge`
@@ -280,15 +281,17 @@ def verify_cards(cards: list[dict], sources: dict[str, str],
     but unsupported card is marked UNFAITHFUL (ok=False), so it drops out just like a
     quote that failed to match.
     """
+    from . import evidence_state  # stdlib; attach a graded verdict per card (offline)
     results = []
     for c in cards:
         pno = c.get("paper", "")
         cid = c.get("card_id", "?")
         src = sources.get(pno)
         if src is None:
-            results.append({"card_id": cid, "paper": pno, "status": "FAIL",
-                            "score": 0.0, "note": f"no source text for {pno}",
-                            "ok": False, "card": c})
+            r = {"card_id": cid, "paper": pno, "status": "FAIL", "score": 0.0,
+                 "note": f"no source text for {pno}", "ok": False, "card": c}
+            r["grade"] = evidence_state.from_card_result(r, abstract_only=abstract_only)
+            results.append(r)
             continue
         v = verify_quote(c.get("quote", ""), src, c.get("numbers"),
                          allow_fuzzy=allow_fuzzy)
@@ -305,6 +308,8 @@ def verify_cards(cards: list[dict], sources: dict[str, str],
             if fj["judged"] and not fj["supported"]:
                 r["status"], r["ok"] = "UNFAITHFUL", False
                 r["note"] = "claim not supported by quote: " + fj["reason"]
+        # graded verdict: Supported/Tension/Conflict/Unknown + confidence tier
+        r["grade"] = evidence_state.from_card_result(r, abstract_only=abstract_only)
         results.append(r)
     return results
 
@@ -426,7 +431,8 @@ def scan_cited_claims(draft_text: str, verified_cards: list[dict],
 
 
 def build(root: Path, draft_text: str = "", allow_fuzzy: bool = False,
-          judge: Any = None, citekey_to_paper: dict[str, str] | None = None) -> dict[str, Any]:
+          judge: Any = None, citekey_to_paper: dict[str, str] | None = None,
+          abstract_only: bool = False) -> dict[str, Any]:
     """Run the gate. Returns a report dict; `passed` is False if any quote failed.
 
     No-op (skipped=True, passed=True) when neither cards nor source texts are present,
@@ -449,7 +455,8 @@ def build(root: Path, draft_text: str = "", allow_fuzzy: bool = False,
             if line:
                 cards.append(json.loads(line))
 
-    card_results = verify_cards(cards, sources, allow_fuzzy=allow_fuzzy, judge=judge)
+    card_results = verify_cards(cards, sources, allow_fuzzy=allow_fuzzy, judge=judge,
+                                abstract_only=abstract_only)
     passed_cards = [r["card"] for r in card_results if r["ok"]]
     # An unverifiable card is dropped (never enters cards_verified) and reported as a
     # WARNING — it is not yet cited, so it does not freeze the draft.
