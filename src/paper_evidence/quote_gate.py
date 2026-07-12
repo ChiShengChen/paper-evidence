@@ -79,6 +79,34 @@ def _line_number_match(q_norm: str, norm: str) -> bool:
     return qs in ns
 
 
+# --------------------------------------------------------------------------- #
+# mis-attribution guard: the claim's subject must be NAMED in its own quote
+# --------------------------------------------------------------------------- #
+def _name_tokens(s: str) -> list[str]:
+    """Letter/digit-split lowercase tokens, so 'CLEF2' -> ['clef','2'] and 'MBON1' never
+    matches inside 'MBON12'."""
+    return re.findall(r"[a-z]+|\d+", str(s or "").lower())
+
+
+def name_matches(name: str, text: str) -> bool:
+    """True iff `name`'s token-run appears in `text` as a boundary token-run — and is not
+    extended by a trailing digit (so 'P1' does not match inside 'P12')."""
+    nt, tt = _name_tokens(name), _name_tokens(text)
+    if not nt:
+        return False
+    for i in range(len(tt) - len(nt) + 1):
+        if tt[i:i + len(nt)] == nt:
+            nxt = tt[i + len(nt)] if i + len(nt) < len(tt) else ""
+            if not nxt.isdigit():
+                return True
+    return False
+
+
+def focus_named(names: list[str], text: str) -> bool:
+    """True iff any of the subject names is boundary-matched in the text (quote)."""
+    return any(name_matches(n, text) for n in (names or []) if n)
+
+
 def _fuzzy_best(hay_norm: str, q_norm: str) -> float:
     L = len(q_norm)
     if L == 0 or len(hay_norm) < 10:
@@ -265,6 +293,12 @@ def verify_cards(cards: list[dict], sources: dict[str, str],
         v = verify_quote(c.get("quote", ""), src, c.get("numbers"),
                          allow_fuzzy=allow_fuzzy)
         r = {"card_id": cid, "paper": pno, **v, "card": c}
+        # mis-attribution: a verbatim quote that doesn't even name the claim's subject is
+        # about something else — deterministic, no LLM needed.
+        subjects = c.get("subjects") or ([c["subject"]] if c.get("subject") else [])
+        if r["ok"] and subjects and not focus_named(subjects, c.get("quote", "")):
+            r["status"], r["ok"] = "MISATTRIBUTED", False
+            r["note"] = "claim subject(s) not named in quote: " + ", ".join(map(str, subjects))
         if r["ok"] and judge is not None:
             fj = judge_claim_support(judge, c.get("claim", ""), c.get("quote", ""))
             r["faithful"] = fj

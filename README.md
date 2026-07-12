@@ -157,6 +157,17 @@ without a key. `semantic.chunk_text/rank_chunks/keyword_windows` are reusable an
   gate falls back to verbatim-only (never silently faked).
 - **Recall is measured** — search stops only after *k* zero-yield batches; snowball chases
   citations; a survey's references are diffed against the ledger for a concrete number.
+- **Citations are real** (`citation.py`) — a DOI / PMID / arXiv id is resolved against
+  Crossref / OpenAlex / PubMed / the arXiv API; an id that doesn't resolve is `unverified`
+  (likely invented), a flagged one is `RETRACTED` (don't build on it), and an expected title
+  is checked against the resolved one.
+- **No mis-attribution** (`quote_gate.focus_named`) — a card may carry a `subject`; a verbatim
+  quote that doesn't even name that subject is `MISATTRIBUTED` (the quote is real but about
+  something else), caught deterministically without an LLM.
+- **Evidence is graded** (`evidence_state.py`) — Supported / Tension / Conflict / Unknown +
+  a confidence tier, with three rules: overclaim counts only *positive* mis-attribution
+  (never silence), a source not mentioning something is Unknown (never Conflict), and
+  abstract-only evidence caps confidence at Med.
 
 ## Why not just prompt an LLM?
 
