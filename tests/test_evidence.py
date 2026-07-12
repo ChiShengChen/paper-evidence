@@ -80,6 +80,41 @@ def test_extract_cards_llm_happy():
     assert llm.calls == 1 and cards[0]["card_id"] == "P07-c1"
 
 
+class _CardRepairLLM:
+    """First call returns cards; a REPAIR call (system starts 'You copy EXACT') returns fixes."""
+    def __init__(self, cards_payload, repair_payload):
+        self.cards_payload, self.repair_payload = cards_payload, repair_payload
+
+    def complete_json(self, system, prompt, **kw):
+        return self.repair_payload if system.startswith("You copy EXACT") else self.cards_payload
+
+
+def test_extract_cards_self_repair(tmp_path):
+    src = "Dopamine gates memory in the mushroom body. The APL neuron maintains sparseness."
+    cards_payload = {"cards": [
+        {"claim": "dopamine gates memory",
+         "quote": "Dopamine gates memory in the mushroom body.", "numbers": []},   # verbatim -> kept
+        {"claim": "apl role",
+         "quote": "The APL neuron abolishes all memory forever.", "numbers": []},  # stitched -> repair
+    ]}
+    repair_payload = {"quotes": {"P01-c2": "The APL neuron maintains sparseness."}}  # verbatim fix
+    out = evidence.extract_cards_llm(_CardRepairLLM(cards_payload, repair_payload), "P01",
+                                     "…snippets…", source_text=src)
+    by_id = {c["card_id"]: c for c in out}
+    assert "P01-c1" in by_id                                        # verbatim quote kept
+    assert by_id["P01-c2"]["quote"] == "The APL neuron maintains sparseness."   # repaired
+
+
+def test_extract_cards_self_repair_drops_unrecoverable(tmp_path):
+    src = "Dopamine gates memory in the mushroom body."
+    cards_payload = {"cards": [
+        {"claim": "made up", "quote": "Kenyon cells store visual maps.", "numbers": []}]}
+    repair_payload = {"quotes": {"P01-c1": "still not in the source at all"}}
+    out = evidence.extract_cards_llm(_CardRepairLLM(cards_payload, repair_payload), "P01",
+                                     "…snippets…", source_text=src)
+    assert out == []                                               # non-verbatim, unrepairable -> dropped
+
+
 # --------------------------------------------------------------------------- #
 # snippets + terms file
 # --------------------------------------------------------------------------- #

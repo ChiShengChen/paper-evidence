@@ -60,6 +60,25 @@ def normalize(s: str) -> str:
     return s.strip().lower()
 
 
+# isolated 1-3 digit integers not attached to a word or decimal — i.e. line/marginal
+# numbers that line-numbered preprint PDFs inject mid-sentence (e.g. "antagonist 175 halo")
+_STANDALONE_INT = re.compile(r"(?<![\w.])\d{1,3}(?![\w.])")
+
+
+def _line_number_match(q_norm: str, norm: str) -> bool:
+    """Match a quote against a source that has line/marginal numbers injected into it.
+
+    Drops isolated short integers from BOTH sides for the location check only; the numbers
+    a claim actually depends on are still verified in-context against the un-stripped source.
+    Guarded by a length floor so a short, number-heavy quote can't match spuriously.
+    """
+    qs = re.sub(r"\s+", " ", _STANDALONE_INT.sub(" ", q_norm)).strip()
+    if len(qs) < 25:
+        return False
+    ns = re.sub(r"\s+", " ", _STANDALONE_INT.sub(" ", norm))
+    return qs in ns
+
+
 def _fuzzy_best(hay_norm: str, q_norm: str) -> float:
     L = len(q_norm)
     if L == 0 or len(hay_norm) < 10:
@@ -113,6 +132,8 @@ def verify_quote(quote: str, source: str, numbers: list[Any] | None = None,
     if quote in source:
         status, score = "EXACT", 1.0
     elif q_norm and q_norm in norm:
+        status, score = "NORMALIZED", 1.0
+    elif q_norm and _line_number_match(q_norm, norm):
         status, score = "NORMALIZED", 1.0
     else:
         score = _fuzzy_best(norm, q_norm)

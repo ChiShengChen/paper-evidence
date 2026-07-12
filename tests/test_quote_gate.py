@@ -51,6 +51,20 @@ def test_number_mismatch_is_num_fail():
     assert v["status"] == "NUM_FAIL" and not v["ok"]
 
 
+def test_line_numbered_pdf_quote_still_matches():
+    # source has line numbers injected mid-sentence (as pymupdf does on preprint PDFs)
+    src = ("co-application of the D2R antagonist 175 haloperidol confirmed the molecular "
+           "176 specificity of these dopamine sensors in brain slices.")
+    quote = ("co-application of the D2R antagonist haloperidol confirmed the molecular "
+             "specificity of these dopamine sensors in brain slices")
+    v = quote_gate.verify_quote(quote, src)
+    assert v["ok"] and v["status"] == "NORMALIZED"
+    # a genuinely different quote is NOT rescued by the tolerance
+    bad = quote_gate.verify_quote(
+        "the antagonist enhanced dopamine release throughout the entire fly brain", src)
+    assert not bad["ok"]
+
+
 def test_numbers_must_be_near_quote():
     filler = "lorem ipsum dolor sit amet consectetur " * 12  # ~470 chars > window
     src = ("The encoder reached 0.912 macro-F1 on the sleep cohort. " + filler +

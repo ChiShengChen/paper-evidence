@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .quote_gate import verify_quote
+
 DEFAULT_SKILL_DIR = Path.home() / ".claude" / "skills" / "paper-deep-search" / "scripts"
 
 # Every keyword-searchable source. `unpaywall` is intentionally absent: it is a DOI
@@ -80,13 +82,18 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def _landable_rank(p: dict) -> tuple:
-    """Sort key: prefer rows we can actually fetch (arXiv/PMC/OA pdf), then citations."""
-    has_oa = bool(p.get("arxiv_id") or p.get("pmcid") or p.get("pdf_url"))
+    """Sort key: prefer sources that reliably yield OA full text, THEN citations.
+
+    arXiv (3) always lands; a PMC id (2) usually lands via Europe PMC; a bare pdf_url (1)
+    is often a paywalled publisher link that 403s. Ranking OA-reliability above citations
+    matters because in many fields the most-cited papers are the paywalled ones — sorting
+    by citations alone fills the triage list with rows that never land."""
+    oa_tier = 3 if p.get("arxiv_id") else 2 if p.get("pmcid") else 1 if p.get("pdf_url") else 0
     try:
         cites = int(p.get("citations") or 0)
     except (TypeError, ValueError):
         cites = 0
-    return (has_oa, cites)
+    return (oa_tier, cites)
 
 
 def mark_include(ledger_path: Path, max_papers: int, require_oa: bool = True) -> list[str]:
@@ -200,8 +207,42 @@ def parse_cards(raw: Any, pno: str, start_index: int = 1) -> list[dict]:
     return cards
 
 
-def extract_cards_llm(llm: Any, pno: str, snippets: str, max_cards: int = 6) -> list[dict]:
-    """One LLM call -> verbatim cards for one paper. Never raises; failures -> []."""
+REPAIR_SYSTEM = (
+    "You copy EXACT verbatim quotes. For each claim, return the single sentence from the "
+    "SNIPPETS that supports it, copied character-for-character with no edits, paraphrase, "
+    "or stitching across sentences. If no single sentence supports the claim, return \"\"."
+)
+
+
+def _repair_quotes(llm: Any, pno: str, bad: list[dict], snippets: str,
+                   source_text: str) -> list[dict]:
+    """One re-prompt that asks the model to copy a verbatim sentence for each failed card.
+
+    Returns the subset whose repaired quote now verifies. This is what turns a stitched /
+    hallucinated quote (reads like the paper but is not in it) into either a real verbatim
+    quote or a dropped card — instead of leaning on the downstream gate to reject them all.
+    """
+    claims = "\n".join(f"- {c['card_id']}: {c['claim']}" for c in bad)
+    prompt = (f"CLAIMS:\n{claims}\n\nSNIPPETS:\n{snippets}\n\n"
+              'Return JSON {"quotes": {"<card_id>": "<exact verbatim sentence or empty>"}}.')
+    try:
+        r = llm.complete_json(REPAIR_SYSTEM, prompt)
+    except Exception:  # noqa: BLE001
+        return []
+    fixed = r.get("quotes", {}) if isinstance(r, dict) else {}
+    out = []
+    for c in bad:
+        q = str(fixed.get(c["card_id"], "")).strip()
+        if q and verify_quote(q, source_text, c.get("numbers"))["ok"]:
+            out.append({**c, "quote": q[:300]})
+    return out
+
+
+def extract_cards_llm(llm: Any, pno: str, snippets: str, max_cards: int = 6,
+                      source_text: str | None = None) -> list[dict]:
+    """One LLM call -> cards for one paper. If `source_text` is given, quotes are checked
+    verbatim on the spot and non-verbatim ones get one repair re-prompt (kept only if the
+    repaired quote verifies). Never raises; failures -> []."""
     if not snippets.strip():
         return []
     prompt = CARD_PROMPT.format(pno=pno, max_cards=max_cards, snippets=snippets)
@@ -210,7 +251,17 @@ def extract_cards_llm(llm: Any, pno: str, snippets: str, max_cards: int = 6) -> 
     except Exception as e:  # noqa: BLE001 — a flaky paper must not sink the batch
         print(f"  [cards] {pno}: LLM extraction failed ({e}); 0 cards", file=sys.stderr)
         return []
-    return parse_cards(raw, pno)
+    cards = parse_cards(raw, pno)
+    if source_text is None:
+        return cards
+    good = [c for c in cards if verify_quote(c["quote"], source_text, c.get("numbers"))["ok"]]
+    bad = [c for c in cards if c not in good]
+    if bad:
+        recovered = _repair_quotes(llm, pno, bad, snippets, source_text)
+        print(f"  [cards] {pno}: {len(good)} verbatim, {len(bad)} non-verbatim -> "
+              f"{len(recovered)} repaired", file=sys.stderr)
+        good += recovered
+    return good
 
 
 def install_corpus(root: Path, workdir: Path, cards: list[dict],
@@ -243,19 +294,69 @@ def _run_script(skill_dir: Path, name: str, args: list[str], env_email: str | No
     subprocess.run(cmd, check=True, env=env)
 
 
+def _resolve_skill_dir(skill_dir: Path | None) -> Path:
+    skill_dir = Path(skill_dir or DEFAULT_SKILL_DIR)
+    if not (skill_dir / "search_papers.py").exists():
+        raise FileNotFoundError(f"paper-deep-search scripts not found at {skill_dir} "
+                                "(install the skill or pass --skill-dir).")
+    return skill_dir
+
+
+def land_and_card(root: Path, queries: list[str], max_papers: int = 8,
+                  terms: list[str] | None = None, skill_dir: Path | None = None,
+                  use_llm: bool = True, max_cards: int = 6, contact_email: str | None = None,
+                  workdir: Path | None = None) -> dict[str, Any]:
+    """Triage an existing ledger, land full texts, extract + install verbatim cards.
+
+    Assumes <workdir>/ledger.jsonl already exists (from evidence.run's search or from
+    recall.run). This is the half after search — so a coverage-first loop can grow the
+    ledger with recall.run and then land the winners here without searching again.
+    """
+    from .llm import api_key_available, get_client
+
+    root = Path(root)
+    skill_dir = _resolve_skill_dir(skill_dir)
+    workdir = Path(workdir or root / "data" / "evidence" / "_work")
+
+    chosen = mark_include(workdir / "ledger.jsonl", max_papers)
+    print(f"[evidence] triage: {len(chosen)} paper(s) marked include", file=sys.stderr)
+
+    _run_script(skill_dir, "fetch_fulltext.py", ["--workdir", str(workdir)], contact_email)
+
+    terms_path = make_terms_file(workdir / "terms.txt", terms or [], queries)
+    landed = sorted(p.stem for p in (workdir / "papers").glob("*.txt"))
+    if landed:
+        _run_script(skill_dir, "extract_snippets.py",
+                    ["--workdir", str(workdir), "--terms", str(terms_path)], contact_email)
+
+    cards: list[dict] = []
+    if use_llm and landed and api_key_available():
+        llm = get_client()
+        print(f"[evidence] extracting cards from {len(landed)} paper(s) via LLM…",
+              file=sys.stderr)
+        for pno in landed:
+            src = (workdir / "papers" / f"{pno}.txt").read_text(encoding="utf-8", errors="replace")
+            cards.extend(extract_cards_llm(llm, pno, gather_snippets(workdir, pno),
+                                           max_cards=max_cards, source_text=src))
+    elif use_llm and landed:
+        print("[evidence] no LLM key — skipping card extraction "
+              "(draft-quote scanning still works).", file=sys.stderr)
+
+    summary = install_corpus(root, workdir, cards, landed)
+    summary.update(landed=len(landed))
+    print(f"[evidence] corpus ready: {len(landed)} paper(s), {len(cards)} card(s) "
+          f"-> {summary['evidence_dir']}", file=sys.stderr)
+    return summary
+
+
 def run(root: Path, queries: list[str],
         sources: str = "arxiv,openalex,semanticscholar,pubmed,europepmc,crossref",
         max_per_source: int = 25, max_papers: int = 8, terms: list[str] | None = None,
         skill_dir: Path | None = None, use_llm: bool = True, max_cards: int = 6,
         contact_email: str | None = None, workdir: Path | None = None) -> dict[str, Any]:
     """Full search -> land -> snippet -> card -> install pipeline. Returns a summary."""
-    from .llm import api_key_available, get_client
-
     root = Path(root)
-    skill_dir = Path(skill_dir or DEFAULT_SKILL_DIR)
-    if not (skill_dir / "search_papers.py").exists():
-        raise FileNotFoundError(f"paper-deep-search scripts not found at {skill_dir} "
-                                "(install the skill or pass --skill-dir).")
+    skill_dir = _resolve_skill_dir(skill_dir)
     workdir = Path(workdir or root / "data" / "evidence" / "_work")
     (workdir / "results").mkdir(parents=True, exist_ok=True)
     sources = expand_sources(sources)
@@ -272,36 +373,9 @@ def run(root: Path, queries: list[str],
                 ["--inputs", str(workdir / "results" / "*.jsonl"),
                  "--workdir", str(workdir)], contact_email)
 
-    # Triage — pick what to land
-    chosen = mark_include(workdir / "ledger.jsonl", max_papers)
-    print(f"[evidence] triage: {len(chosen)} paper(s) marked include", file=sys.stderr)
-
-    # Stage 4 — land full texts
-    _run_script(skill_dir, "fetch_fulltext.py", ["--workdir", str(workdir)], contact_email)
-
-    # Stage 5a — snippets
-    terms_path = make_terms_file(workdir / "terms.txt", terms or [], queries)
-    landed = sorted(p.stem for p in (workdir / "papers").glob("*.txt"))
-    if landed:
-        _run_script(skill_dir, "extract_snippets.py",
-                    ["--workdir", str(workdir), "--terms", str(terms_path)], contact_email)
-
-    # Stage 5b — cards (our LLM)
-    cards: list[dict] = []
-    if use_llm and landed and api_key_available():
-        llm = get_client()
-        print(f"[evidence] extracting cards from {len(landed)} paper(s) via LLM…",
-              file=sys.stderr)
-        for pno in landed:
-            cards.extend(extract_cards_llm(llm, pno, gather_snippets(workdir, pno),
-                                           max_cards=max_cards))
-    elif use_llm and landed:
-        print("[evidence] no LLM key — skipping card extraction "
-              "(draft-quote scanning still works).", file=sys.stderr)
-
-    # Install
-    summary = install_corpus(root, workdir, cards, landed)
-    summary.update(queries=len(queries), landed=len(landed), sources=sources)
-    print(f"[evidence] corpus ready: {len(landed)} paper(s), {len(cards)} card(s) "
-          f"-> {summary['evidence_dir']}", file=sys.stderr)
+    # Stages triage -> land -> snippet -> card -> install
+    summary = land_and_card(root, queries=queries, max_papers=max_papers, terms=terms,
+                            skill_dir=skill_dir, use_llm=use_llm, max_cards=max_cards,
+                            contact_email=contact_email, workdir=workdir)
+    summary.update(queries=len(queries), sources=sources)
     return summary

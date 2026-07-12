@@ -99,6 +99,28 @@ flowchart LR
     C --> G["quote_gate<br/>verbatim · numbers · faithfulness"] --> V[cards_verified.jsonl]
 ```
 
+## One command: search → corpus → grounded hypotheses
+
+`scripts/hypothesis_loop.py` chains the whole thing — grow the ledger to saturation +
+snowball, land + extract verbatim cards, generate hypotheses, and keep only those whose
+premise the corpus supports:
+
+```bash
+python scripts/hypothesis_loop.py \
+    --query "Drosophila mushroom body olfactory memory" \
+    --query "Drosophila dopamine reward learning" \
+    --question "How is olfactory memory encoded in the fly mushroom body?" \
+    --max-papers 12 --n 5 --out fly_hypotheses.md
+```
+
+Writes `fly_hypotheses.md` + `.jsonl` of grounded hypotheses (premise cited + verified,
+prediction novel). Robustness built in from a real fly run: card extraction **self-repairs**
+non-verbatim quotes (one re-prompt to copy the exact sentence, else the card is dropped);
+verification **tolerates line/marginal numbers** that preprint PDFs inject mid-sentence; and
+triage prefers **reliably-OA sources** (arXiv > PMC > publisher pdf) so the land list isn't
+filled with paywalled top-cited papers. Live: 6 papers landed → 34 verified cards → 5/5
+hypotheses grounded.
+
 ## What the checks guarantee
 
 - **Quotes are verbatim** — every card's quote is re-greped against its source; a
