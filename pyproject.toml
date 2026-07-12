@@ -1,0 +1,30 @@
+[project]
+name = "paper-evidence"
+version = "0.1.0"
+description = "Extract verifiable evidence from literature and ground LLM claims in it — verbatim, numbers-in-context, and cross-family faithfulness checks."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ChiShengChen" }]
+keywords = ["llm", "hallucination", "literature-review", "citation", "verification",
+            "evidence", "rag", "fact-checking", "hypothesis-generation"]
+# The verification core (quote_gate) is stdlib-only — no runtime deps.
+dependencies = []
+
+[project.optional-dependencies]
+# LLM providers (needed for card extraction + the cross-family faithfulness judge)
+llm = ["google-genai>=1.0", "openai>=1.40", "anthropic>=0.40"]
+# multi-column PDF extraction, used by the paper-deep-search skill's fetch step
+pdf = ["pymupdf>=1.24"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
