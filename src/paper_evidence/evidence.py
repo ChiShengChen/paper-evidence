@@ -302,10 +302,26 @@ def _resolve_skill_dir(skill_dir: Path | None) -> Path:
     return skill_dir
 
 
+def _snippets_for(workdir: Path, pno: str, src: str, question: str | None,
+                  semantic: bool) -> str:
+    """Snippet blob for extraction: semantic (question-ranked chunks) when requested and
+    possible, else the keyword-anchored windows from the skill's extract_snippets."""
+    if semantic and question:
+        try:
+            from .semantic import semantic_windows
+            wins = semantic_windows(src, question, k=20)
+            if wins:
+                return "\n---\n".join(wins)[:14000]
+        except Exception as e:  # noqa: BLE001 — embeddings optional; fall back to keywords
+            print(f"  [semantic] {pno}: {e}; falling back to keyword windows", file=sys.stderr)
+    return gather_snippets(workdir, pno)
+
+
 def land_and_card(root: Path, queries: list[str], max_papers: int = 8,
                   terms: list[str] | None = None, skill_dir: Path | None = None,
                   use_llm: bool = True, max_cards: int = 6, contact_email: str | None = None,
-                  workdir: Path | None = None) -> dict[str, Any]:
+                  workdir: Path | None = None, question: str | None = None,
+                  semantic: bool = False) -> dict[str, Any]:
     """Triage an existing ledger, land full texts, extract + install verbatim cards.
 
     Assumes <workdir>/ledger.jsonl already exists (from evidence.run's search or from
@@ -323,21 +339,22 @@ def land_and_card(root: Path, queries: list[str], max_papers: int = 8,
 
     _run_script(skill_dir, "fetch_fulltext.py", ["--workdir", str(workdir)], contact_email)
 
-    terms_path = make_terms_file(workdir / "terms.txt", terms or [], queries)
     landed = sorted(p.stem for p in (workdir / "papers").glob("*.txt"))
-    if landed:
+    if landed and not (semantic and question):   # semantic path doesn't need the skill's snippets
+        terms_path = make_terms_file(workdir / "terms.txt", terms or [], queries)
         _run_script(skill_dir, "extract_snippets.py",
                     ["--workdir", str(workdir), "--terms", str(terms_path)], contact_email)
 
     cards: list[dict] = []
     if use_llm and landed and api_key_available():
         llm = get_client()
-        print(f"[evidence] extracting cards from {len(landed)} paper(s) via LLM…",
+        mode = "semantic" if (semantic and question) else "keyword"
+        print(f"[evidence] extracting cards from {len(landed)} paper(s) via LLM ({mode})…",
               file=sys.stderr)
         for pno in landed:
             src = (workdir / "papers" / f"{pno}.txt").read_text(encoding="utf-8", errors="replace")
-            cards.extend(extract_cards_llm(llm, pno, gather_snippets(workdir, pno),
-                                           max_cards=max_cards, source_text=src))
+            snips = _snippets_for(workdir, pno, src, question, semantic)
+            cards.extend(extract_cards_llm(llm, pno, snips, max_cards=max_cards, source_text=src))
     elif use_llm and landed:
         print("[evidence] no LLM key — skipping card extraction "
               "(draft-quote scanning still works).", file=sys.stderr)
@@ -353,7 +370,8 @@ def run(root: Path, queries: list[str],
         sources: str = "arxiv,openalex,semanticscholar,pubmed,europepmc,crossref",
         max_per_source: int = 25, max_papers: int = 8, terms: list[str] | None = None,
         skill_dir: Path | None = None, use_llm: bool = True, max_cards: int = 6,
-        contact_email: str | None = None, workdir: Path | None = None) -> dict[str, Any]:
+        contact_email: str | None = None, workdir: Path | None = None,
+        question: str | None = None, semantic: bool = False) -> dict[str, Any]:
     """Full search -> land -> snippet -> card -> install pipeline. Returns a summary."""
     root = Path(root)
     skill_dir = _resolve_skill_dir(skill_dir)
@@ -376,6 +394,7 @@ def run(root: Path, queries: list[str],
     # Stages triage -> land -> snippet -> card -> install
     summary = land_and_card(root, queries=queries, max_papers=max_papers, terms=terms,
                             skill_dir=skill_dir, use_llm=use_llm, max_cards=max_cards,
-                            contact_email=contact_email, workdir=workdir)
+                            contact_email=contact_email, workdir=workdir,
+                            question=question, semantic=semantic)
     summary.update(queries=len(queries), sources=sources)
     return summary

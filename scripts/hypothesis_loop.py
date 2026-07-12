@@ -47,6 +47,8 @@ def main() -> None:
     ap.add_argument("--max-papers", type=int, default=6, help="papers to land full text for")
     ap.add_argument("--max-cards", type=int, default=6)
     ap.add_argument("--n", type=int, default=5, help="hypotheses to generate")
+    ap.add_argument("--semantic", action="store_true",
+                    help="anchor snippets by embedding similarity to --question (needs Gemini key)")
     ap.add_argument("--expand", action="store_true", help="LLM query expansion toward saturation")
     ap.add_argument("--no-recall", action="store_true", help="skip the coverage/snowball stage")
     ap.add_argument("--skill-dir", default=None)
@@ -70,11 +72,13 @@ def main() -> None:
                    research_question=a.question, expand_llm=(llm if a.expand else None))
         # 2) land + card from the recall-grown ledger (no re-search)
         ev = evidence.land_and_card(root, queries=a.queries, max_papers=a.max_papers,
-                                    skill_dir=a.skill_dir, max_cards=a.max_cards, contact_email=a.email)
+                                    skill_dir=a.skill_dir, max_cards=a.max_cards, contact_email=a.email,
+                                    question=a.question, semantic=a.semantic)
     else:
         ev = evidence.run(root=root, queries=a.queries, sources=a.sources,
                           max_per_source=a.max_per_source, max_papers=a.max_papers,
-                          skill_dir=a.skill_dir, max_cards=a.max_cards, contact_email=a.email)
+                          skill_dir=a.skill_dir, max_cards=a.max_cards, contact_email=a.email,
+                          question=a.question, semantic=a.semantic)
 
     # 3) verify cards -> cards_verified.jsonl
     quote_gate.build(root, judge=judge)

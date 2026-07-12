@@ -121,6 +121,29 @@ triage prefers **reliably-OA sources** (arXiv > PMC > publisher pdf) so the land
 filled with paywalled top-cited papers. Live: 6 papers landed → 34 verified cards → 5/5
 hypotheses grounded.
 
+## Deep-read one paper (PDF / URL / arXiv)
+
+Self-contained — no search, no skill. Get the text, extract verbatim cards, verify, and
+summarize from the verified cards only:
+
+```bash
+python scripts/deep_read_paper.py --arxiv 2605.10817 \
+    --question "how was it evaluated and what AUROC did it reach?"
+python scripts/deep_read_paper.py --pdf paper.pdf --terms dopamine --terms "mushroom body"
+```
+
+Writes `deep_read.md` (grounded summary + verified cards). Needs an LLM key; `--pdf` needs
+the `pdf` extra (PyMuPDF).
+
+## Semantic anchoring (reworded questions still hit)
+
+Snippet selection is literal by default. Pass `--semantic --question "…"` (or a `--question`
+to `deep_read_paper.py`) to instead rank passages by **embedding similarity** to the
+question, so a question that shares no words with the text still finds the right passage
+(e.g. *"negative valence during learning"* → the sentence about *"dopaminergic punishment
+signals"*). Uses Gemini embeddings (`gemini-embedding-001`); falls back to keyword windows
+without a key. `semantic.chunk_text/rank_chunks/keyword_windows` are reusable and dep-free.
+
 ## What the checks guarantee
 
 - **Quotes are verbatim** — every card's quote is re-greped against its source; a

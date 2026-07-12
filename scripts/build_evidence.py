@@ -33,6 +33,9 @@ def main() -> None:
     ap.add_argument("--skill-dir", default=None,
                     help=f"paper-deep-search scripts dir (default: {evidence.DEFAULT_SKILL_DIR})")
     ap.add_argument("--no-llm", action="store_true", help="land texts only, skip card extraction")
+    ap.add_argument("--question", default=None, help="orients semantic snippet anchoring")
+    ap.add_argument("--semantic", action="store_true",
+                    help="anchor snippets by embedding similarity to --question (needs Gemini key)")
     ap.add_argument("--root", default=".", help="output root (default: cwd)")
     ap.add_argument("--email", default=None, help="CONTACT_EMAIL for polite API access")
     a = ap.parse_args()
@@ -40,7 +43,7 @@ def main() -> None:
     s = evidence.run(root=Path(a.root), queries=a.queries, sources=a.sources,
                      max_per_source=a.max_per_source, max_papers=a.max_papers, terms=a.terms,
                      skill_dir=a.skill_dir, use_llm=not a.no_llm, max_cards=a.max_cards,
-                     contact_email=a.email)
+                     contact_email=a.email, question=a.question, semantic=a.semantic)
     print(f"\nEvidence corpus: {s['landed']} paper(s), {s['n_cards']} card(s) in {s['evidence_dir']}")
 
 
