@@ -11,9 +11,9 @@ Two layers:
 See README for the fruit-fly-hypothesis-generator style usage: generate hypotheses with an
 LLM, then run quote_gate to keep only the ones your source corpus actually supports.
 """
-from . import (citation, deepread, evidence, evidence_state, hypothesis, quote_gate,
-               recall, semantic, structure)
+from . import (citation, deepread, evidence, evidence_state, hypothesis, provenance,
+               quote_gate, recall, semantic, structure)
 
 __all__ = ["quote_gate", "evidence", "recall", "hypothesis", "semantic", "deepread",
-           "citation", "evidence_state", "structure"]
+           "citation", "evidence_state", "structure", "provenance"]
 __version__ = "0.1.0"

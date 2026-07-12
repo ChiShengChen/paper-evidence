@@ -164,6 +164,10 @@ without a key. `semantic.chunk_text/rank_chunks/keyword_windows` are reusable an
   citations; a survey's references are diffed against the ledger for a concrete number.
   `recall.snowball_s2()` does citation snowball **without the skill** (stdlib Semantic Scholar),
   so recall works standalone; it composes with the pure `recall.recall_diff()`.
+- **Hedged claims are capped** (`evidence_state.claim_modality`) — a source that hedges
+  ("may modulate") can't reach high confidence even when verbatim-supported; "we demonstrate" can.
+- **Provenance is non-destructive** (`provenance.py`) — once a card records how it was produced
+  (model, llm_invoked, tokens), a later pass can't clobber it; `assert_provenance_retained` gates it.
 - **Structured PDF extraction** (`structure.py`) — deep-read recovers section headings,
   drops running headers/footers, and tags each card with its REAL section (Marker-style;
   pymupdf-based, with an optional real-Marker hook). Cleaner source = fewer verbatim misses.
