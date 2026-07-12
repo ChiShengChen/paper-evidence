@@ -45,11 +45,12 @@ def main() -> None:
     ev = root / "data" / "evidence"
     (ev / "papers").mkdir(parents=True, exist_ok=True)
 
-    # 1) get text
+    # 1) get text — structured (section-tagged, headers/footers dropped) for cleaner grounding
     print("[deep-read] loading text…", file=sys.stderr)
-    text = deepread.load_text(pdf=a.pdf, url=a.url, arxiv=a.arxiv, contact_email=a.email)
+    doc = deepread.load_structured(pdf=a.pdf, url=a.url, arxiv=a.arxiv, contact_email=a.email)
+    text = doc.text()
     (ev / "papers" / f"{pno}.txt").write_text(text, encoding="utf-8")
-    print(f"[deep-read] {len(text)} chars", file=sys.stderr)
+    print(f"[deep-read] {len(text)} chars, {len(doc.sections())} section(s)", file=sys.stderr)
 
     if not api_key_available():
         sys.exit("[deep-read] an LLM key is required to extract cards (set a provider + key).")
@@ -72,6 +73,9 @@ def main() -> None:
 
     # 3) extract cards (verbatim self-repair) -> 4) verify
     cards = evidence.extract_cards_llm(llm, pno, snips, max_cards=a.max_cards, source_text=text)
+    for c in cards:                                   # tag each card with its REAL section
+        if (sec := doc.section_for(c.get("quote", ""))):
+            c["section"] = sec
     evidence.write_jsonl(ev / "cards.jsonl", cards)
     gate = quote_gate.build(root, judge=quote_gate.make_judge())
     verified = [json.loads(l) for l in (ev / "cards_verified.jsonl").read_text().splitlines() if l.strip()]

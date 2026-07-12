@@ -22,14 +22,14 @@ def _pdf_to_text(data: bytes) -> str:
     return "".join(page.get_text("text") for page in doc)
 
 
-def load_text(pdf: str | None = None, url: str | None = None, arxiv: str | None = None,
-              contact_email: str | None = None) -> str:
-    """Return the full text of one paper from a local PDF, a PDF URL, or an arXiv id."""
+def _fetch(pdf: str | None, url: str | None, arxiv: str | None,
+           contact_email: str | None) -> tuple[bytes | None, str | None]:
+    """Return (pdf_bytes, plain_text) for one paper — exactly one is non-None."""
     if pdf:
         p = Path(pdf)
         if p.suffix.lower() == ".pdf":
-            return _pdf_to_text(p.read_bytes())
-        return p.read_text(encoding="utf-8", errors="replace")   # already-extracted .txt
+            return p.read_bytes(), None
+        return None, p.read_text(encoding="utf-8", errors="replace")   # already-extracted .txt
     if arxiv:
         m = _ARXIV.search(arxiv)
         if not m:
@@ -41,7 +41,25 @@ def load_text(pdf: str | None = None, url: str | None = None, arxiv: str | None 
         "User-Agent": f"paper-evidence/1.0 (mailto:{contact_email or 'anonymous@example.com'})"})
     with urllib.request.urlopen(req, timeout=60) as r:
         data = r.read()
-    return _pdf_to_text(data) if data[:5].startswith(b"%PDF") else data.decode("utf-8", "replace")
+    return (data, None) if data[:5].startswith(b"%PDF") else (None, data.decode("utf-8", "replace"))
+
+
+def load_text(pdf: str | None = None, url: str | None = None, arxiv: str | None = None,
+              contact_email: str | None = None) -> str:
+    """Return the full text of one paper from a local PDF, a PDF URL, or an arXiv id."""
+    data, text = _fetch(pdf, url, arxiv, contact_email)
+    return _pdf_to_text(data) if data is not None else (text or "")
+
+
+def load_structured(pdf: str | None = None, url: str | None = None, arxiv: str | None = None,
+                    contact_email: str | None = None):
+    """Return a section-tagged StructuredDoc (Marker-style): cleaner source + real section
+    names for cards. Falls back to a single text block for an already-extracted .txt."""
+    from .structure import Block, StructuredDoc, extract_structured
+    data, text = _fetch(pdf, url, arxiv, contact_email)
+    if data is not None:
+        return extract_structured(data)
+    return StructuredDoc([Block("text", "", 1, text or "")])
 
 
 SYNTH_SYSTEM = (

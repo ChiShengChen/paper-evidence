@@ -164,6 +164,9 @@ without a key. `semantic.chunk_text/rank_chunks/keyword_windows` are reusable an
   citations; a survey's references are diffed against the ledger for a concrete number.
   `recall.snowball_s2()` does citation snowball **without the skill** (stdlib Semantic Scholar),
   so recall works standalone; it composes with the pure `recall.recall_diff()`.
+- **Structured PDF extraction** (`structure.py`) — deep-read recovers section headings,
+  drops running headers/footers, and tags each card with its REAL section (Marker-style;
+  pymupdf-based, with an optional real-Marker hook). Cleaner source = fewer verbatim misses.
 - **Each card is graded** — `quote_gate.build` attaches an `evidence_state` verdict
   (Supported/Tension/Conflict/Unknown + confidence) to every card result, so downstream gets a
   graded confidence, not just pass/fail (`abstract_only=True` caps confidence at Med).
