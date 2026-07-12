@@ -15,6 +15,11 @@ Two layers, usable independently:
 | **`quote_gate`** — long-text reasoning core | Verify that every claim about a source is backed by a **verbatim** quote, that **numbers sit next to their quote**, and — with an independent **cross-family** LLM judge — that paraphrased/cited claims are actually supported. | **none** (stdlib) |
 | **`evidence` + `recall`** — literature extractor | Search literature to **saturation**, **snowball** citations, land full texts, extract verbatim evidence cards, and measure **recall** against a survey's references. | drives the `paper-deep-search` skill |
 
+Also included: **`semantic`** (embedding-anchored snippets — reworded questions still hit),
+**`deepread`** (single-paper PDF/URL/arXiv → cards + summary), **`citation`** (DOI/PMID/arXiv
+resolve + retraction check), **`evidence_state`** (Supported/Tension/Conflict/Unknown grading),
+and **`hypothesis`** (generate → ground loop). See the sections below.
+
 ## Install
 
 ```bash
